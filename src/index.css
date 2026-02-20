@@ -1,0 +1,19 @@
+/* Exemplo importando a fonte 'Montserrat' */
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+
+/* Muda o cursor do site inteiro */
+body {
+  /* O 'auto' no final é obrigatório (é o plano B se a imagem falhar) */
+  cursor: url('/src/assets/cursor-cookie.svg') 16 16, auto;
+}
+
+/* Opcional: Muda o cursor quando passa em cima de botões/links */
+a, button, .cursor-pointer {
+  cursor: url('/src/assets/cursor-cookie.svg') 16 16, pointer;
+}
