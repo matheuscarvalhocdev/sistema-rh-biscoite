@@ -151,7 +151,130 @@ export const base44 = {
             saveDB(db);
         }
       }
+    },
+
+    Attendance: {
+      get: async (id) => { 
+          await delay(); 
+          const db = getDB();
+          return (db.attendance || []).find(a => a.id === id) || null; 
+      },
+      save: async (data) => {
+        await delay();
+        const db = getDB();
+        if (!db.attendance) db.attendance = [];
+        const index = db.attendance.findIndex(a => a.id === data.id);
+        if (index !== -1) {
+            db.attendance[index] = data;
+        } else {
+            db.attendance.push(data);
+        }
+        saveDB(db);
+        logAction("UPDATE", "PONTO", `Atualizou a escala da loja no mês ${data.month}`);
+        return data;
+      }
+    },
+
+    TimeBank: {
+      list: async () => { await delay(); return getDB().timebank || []; },
+      create: async (data) => {
+        await delay();
+        const db = getDB();
+        const newRecord = { ...data, id: Date.now(), createdAt: new Date().toISOString() };
+        if (!db.timebank) db.timebank = [];
+        db.timebank.push(newRecord);
+        saveDB(db);
+        return newRecord;
+      },
+      delete: async (id) => {
+        await delay();
+        const db = getDB();
+        if (db.timebank) {
+          db.timebank = db.timebank.filter(r => r.id !== id);
+          saveDB(db);
+        }
+      }
+    },
+
+    Occurrence: {
+      list: async () => { await delay(); return getDB().occurrences || []; },
+      create: async (data) => {
+        await delay();
+        const db = getDB();
+        const newRecord = { ...data, id: Date.now(), createdAt: new Date().toISOString() };
+        if (!db.occurrences) db.occurrences = [];
+        db.occurrences.push(newRecord);
+        saveDB(db);
+        return newRecord;
+      },
+      delete: async (id) => {
+        await delay();
+        const db = getDB();
+        if (db.occurrences) {
+          db.occurrences = db.occurrences.filter(r => r.id !== id);
+          saveDB(db);
+        }
+      }
+    },
+
+    User: {
+      list: async () => { await delay(); return getDB().users || []; },
+      create: async (data) => {
+        await delay();
+        const db = getDB();
+        const newRecord = { ...data, id: Date.now(), createdAt: new Date().toISOString() };
+        if (!db.users) db.users = [];
+        db.users.push(newRecord);
+        saveDB(db);
+        return newRecord;
+      },
+      update: async (id, data) => {
+        await delay();
+        const db = getDB();
+        if (db.users) {
+            const index = db.users.findIndex(r => r.id === id);
+            if (index !== -1) db.users[index] = { ...db.users[index], ...data };
+            saveDB(db);
+        }
+      },
+      delete: async (id) => {
+        await delay();
+        const db = getDB();
+        if (db.users) {
+          db.users = db.users.filter(r => r.id !== id);
+          saveDB(db);
+        }
+      }
+    },
+
+    Settings: {
+      get: async () => {
+        await delay();
+        const db = getDB();
+        // Retorna as configurações ou um padrão caso seja a primeira vez
+        return db.settings || { 
+            companyName: 'Biscoitê', 
+            cnpj: '00.000.000/0001-00', 
+            payrollTax: 70, // Aquela taxa que você mencionou!
+            defaultVR: 25,
+            defaultVT: 12,
+            emailAlerts: true
+        };
+      },
+      save: async (data) => {
+        await delay();
+        const db = getDB();
+        db.settings = { ...(db.settings || {}), ...data };
+        saveDB(db);
+        return db.settings;
+      }
     }
+
+
+
+
+
+
 
 
 

@@ -11,14 +11,13 @@ import Dashboard from './pages/Dashboard'
 import Employees from './pages/Employees'
 import ImportEmployees from './pages/ImportEmployees'
 import Units from './pages/Units'
-import UserManagement from './pages/UserManagement'
-import MonthlyLogs from './pages/MonthlyLogs' // Tela de Registros
+import MonthlyLogs from './pages/MonthlyLogs' 
+import Users from './pages/Users' // <-- NOSSA TELA NOVA AQUI
 import Occurrences from './pages/Occurrences'
 import History from './pages/History'
 import Settings from './pages/Settings'
 import Vagas from './pages/Vagas'
-
-import Payroll from './pages/Payroll';
+import Payroll from './pages/Payroll'
 
 const queryClient = new QueryClient()
 
@@ -36,23 +35,21 @@ function App() {
              <Route path="employees" element={<Employees />} />
              <Route path="import-employees" element={<ImportEmployees />} />
              <Route path="units" element={<Units />} />
-             <Route path="users" element={<UserManagement />} />
-             <Route path="/payroll" element={<Payroll />} />
              
-             {/* Outras páginas */}
+             {/* 👇 AQUI ESTAVA O ERRO! Agora só tem a nossa tela nova: */}
+             <Route path="users" element={<Users />} /> 
+             
+             <Route path="payroll" element={<Payroll />} />
              <Route path="occurrences" element={<Occurrences />} />
              <Route path="history" element={<History />} />
              <Route path="settings" element={<Settings />} />
              <Route path="vagas" element={<Vagas />} />
              
-             {/* 👇 CORREÇÃO AQUI: Várias rotas apontando para a mesma tela de Registros */}
-             {/* Assim garantimos que funciona se o menu chamar 'registros', 'logs' ou 'records' */}
+             {/* Rotas de Ponto */}
              <Route path="registros" element={<MonthlyLogs />} />
              <Route path="logs" element={<MonthlyLogs />} />
              <Route path="records" element={<MonthlyLogs />} />
              <Route path="monthly-logs" element={<MonthlyLogs />} />
-             
-             
           </Route>
         </Routes>
         
