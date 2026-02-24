@@ -1,6 +1,6 @@
 import logoBiscoite from './assets/logo-biscoite.svg';
 import { useState } from 'react'
-import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
+import { Outlet, Link, useLocation, useNavigate, Navigate } from 'react-router-dom' // 👈 Adicionamos o Navigate aqui
 import { 
   LayoutDashboard, Users, Upload, Building2, FileText, AlertTriangle, 
   History, Settings as SettingsIcon, UserCog, LogOut, Menu, X, 
@@ -13,10 +13,15 @@ export default function Layout() {
   const pathname = location.pathname;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // 👇 1. LÊ QUEM É O USUÁRIO LOGADO NO NAVEGADOR
+  // 👇 1. VERIFICA SE ESTÁ LOGADO DE VERDADE
   const storedUserStr = localStorage.getItem("rh_user");
-  // Se por acaso alguém pular o login nos testes, fingimos que é Admin para não quebrar o sistema
-  const currentUser = storedUserStr ? JSON.parse(storedUserStr) : { name: "Usuário Teste", role: "Administrador", email: "admin@biscoite.com" };
+  
+  // Se não tem ninguém logado, chuta pra tela de login na mesma hora!
+  if (!storedUserStr) {
+      return <Navigate to="/login" replace />;
+  }
+
+  const currentUser = JSON.parse(storedUserStr);
 
   // 2. LISTA COMPLETA DE MENUS
   const allMenuItems = [
@@ -33,13 +38,11 @@ export default function Layout() {
     { path: '/settings', label: 'Configurações', icon: SettingsIcon },
   ];
 
-  // 👇 3. A MÁGICA DA PERMISSÃO: FILTRA O MENU BASEADO NO CARGO
+  // 3. FILTRA O MENU BASEADO NO CARGO
   const menuItems = allMenuItems.filter(item => {
       if (currentUser.role === 'Líder de Loja') {
-          // O Líder de loja SÓ PODE VER esses 3 menus:
           return ['/', '/monthly-logs', '/occurrences'].includes(item.path);
       }
-      // Se for RH ou Administrador, vê tudo (retorna true para todos)
       return true; 
   });
 
@@ -49,7 +52,6 @@ export default function Layout() {
     navigate("/login");
   };
 
-  // Define a cor do crachá de acordo com o perfil
   const roleColors = {
       'Administrador': 'text-purple-600 bg-purple-100',
       'RH': 'text-blue-600 bg-blue-100',
@@ -77,12 +79,10 @@ export default function Layout() {
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
           
-          {/* Logo */}
           <div className="p-6 border-b border-slate-100 flex items-center justify-center shrink-0">
               <img src={logoBiscoite} alt="Biscoitê" className="h-16 w-auto" />
           </div>
 
-          {/* Links do Menu */}
           <nav className="flex-1 overflow-y-auto p-4 space-y-1">
             {menuItems.map((item) => {
               const isActive = pathname === item.path;
@@ -102,7 +102,7 @@ export default function Layout() {
             })}
           </nav>
 
-          {/* 👇 CRACHÁ DO USUÁRIO LOGADO */}
+          {/* CRACHÁ DO USUÁRIO LOGADO */}
           <div className="p-4 border-t border-slate-100 bg-slate-50/50 shrink-0">
              <div className="flex items-center gap-3 mb-4 px-2">
                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${roleColors[currentUser.role] || 'bg-slate-200 text-slate-700'}`}>
@@ -126,7 +126,7 @@ export default function Layout() {
 
       </aside>
 
-      {/* Área Principal (Conteúdo) */}
+      {/* Área Principal */}
       <main className="flex-1 overflow-y-auto h-full w-full">
         <div className="p-8 max-w-7xl mx-auto">
            <Outlet />
