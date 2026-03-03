@@ -11,9 +11,10 @@ export default function Login() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  // 👇 Estados para o "Esqueceu a senha"
+  // Estados para o "Esqueceu a senha"
   const [showRecovery, setShowRecovery] = useState(false);
   const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [isRecovering, setIsRecovering] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -51,15 +52,49 @@ export default function Login() {
     }
   };
 
-  // 👇 Função que processa o pedido de recuperação
-  const handleRecoverPassword = (e) => {
+  // 👇 NOVA LÓGICA DO "ESQUECI A SENHA"
+  const handleRecoverPassword = async (e) => {
       e.preventDefault();
       if (!recoveryEmail) return;
       
-      alert(`✅ Sucesso!\nSe o e-mail "${recoveryEmail}" estiver cadastrado no sistema, você receberá um link com as instruções de redefinição de senha em alguns minutos.`);
-      
-      setShowRecovery(false);
-      setRecoveryEmail("");
+      setIsRecovering(true);
+
+      try {
+          // Bloqueio para o Super Admin
+          if (recoveryEmail === "admin@biscoite.com") {
+              alert("A senha do Super Admin é fixa no código (admin123) e não pode ser alterada por aqui.");
+              setIsRecovering(false);
+              return;
+          }
+
+          // Busca o usuário no nosso banco de dados
+          const users = await base44.entities.User.list();
+          const foundUser = users.find(u => u.email === recoveryEmail);
+
+          if (foundUser) {
+              // 1. Gera uma senha provisória
+              const temporaryPassword = "biscoite" + Math.floor(100 + Math.random() * 900);
+              
+              // 2. Atualiza a senha no banco de dados
+              await base44.entities.User.update(foundUser.id, { 
+                  ...foundUser, 
+                  password: temporaryPassword 
+              });
+
+              // 3. Mostra a mensagem de teste
+              alert(`🚨 SIMULAÇÃO DE SISTEMA 🚨\n\nNa vida real, um e-mail com um link seria enviado agora para ${recoveryEmail}.\n\nPara fins de homologação/teste, a senha deste usuário foi resetada para:\n\n👉 ${temporaryPassword}`);
+          } else {
+              // Mensagem padrão de segurança (não avisa que o e-mail não existe)
+              alert(`✅ Sucesso!\nSe o e-mail "${recoveryEmail}" estiver cadastrado no sistema, você receberá um link com as instruções.`);
+          }
+
+          setShowRecovery(false);
+          setRecoveryEmail("");
+      } catch (err) {
+          alert("Erro ao tentar recuperar a senha.");
+      } finally {
+          setIsRecovering(false);
+      }
   };
 
   return (
@@ -123,7 +158,6 @@ export default function Login() {
 
             <div className="flex items-center justify-between">
               <div className="text-sm">
-                {/* 👇 BOTÃO CLICÁVEL PARA ABRIR O MODAL DE RECUPERAÇÃO */}
                 <button 
                   type="button" 
                   onClick={() => setShowRecovery(true)}
@@ -153,7 +187,7 @@ export default function Login() {
         </div>
       </div>
 
-      {/* 👇 MODAL DE RECUPERAÇÃO DE SENHA */}
+      {/* MODAL DE RECUPERAÇÃO DE SENHA */}
       {showRecovery && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95">
@@ -187,8 +221,8 @@ export default function Login() {
                         <button type="button" onClick={() => setShowRecovery(false)} className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors">
                             Cancelar
                         </button>
-                        <button type="submit" className="flex-1 py-3 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-sm transition-colors">
-                            <Send className="w-4 h-4" /> Enviar Link
+                        <button type="submit" disabled={isRecovering} className="flex-1 py-3 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-sm transition-colors disabled:opacity-70">
+                            {isRecovering ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Send className="w-4 h-4" /> Enviar Link</>}
                         </button>
                     </div>
                 </form>

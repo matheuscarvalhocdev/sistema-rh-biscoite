@@ -1,29 +1,25 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "../api/base44Client";
 import { 
-  Plus, Edit2, Trash2, X, Store, MapPin, Hash, FileText, Search, Users, CheckCircle2, AlertCircle, XCircle
+  Plus, Edit2, Trash2, X, Store, MapPin, Hash, FileText, Search, Users, 
+  CheckCircle2, AlertCircle, XCircle, UploadCloud, Loader2
 } from "lucide-react";
 import { ProtectedPage } from "../components/shared/AccessControl";
+import * as XLSX from 'xlsx'; // 👈 NOSSO NOVO LEITOR DE EXCEL!
 
 export default function Units() {
   const queryClient = useQueryClient();
+  const fileInputRef = useRef(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [activeTab, setActiveTab] = useState("Próprias");
   const [searchTerm, setSearchTerm] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
 
   const [formData, setFormData] = useState({ 
-      name: "", 
-      status: "Ativa (Loja Própria)", 
-      accountingId: "", 
-      companyName: "", 
-      cnpj: "",
-      email: "",
-      address: "",
-      city: "",
-      state: "",
-      manager: ""
+      name: "", status: "Ativa (Loja Própria)", accountingId: "", companyName: "", cnpj: "",
+      email: "", address: "", city: "", state: "", manager: ""
   });
 
   const { data: units = [] } = useQuery({ queryKey: ['units'], queryFn: () => base44.entities.Unit.list() });
@@ -42,8 +38,7 @@ export default function Units() {
     setEditingId(unit.id);
     setFormData({ 
         name: unit.name || "", 
-        // Se a loja for antiga e tiver só "Ativa", a gente já converte para o novo formato na edição
-        status: unit.status === "Ativa" ? "Ativa (Loja Própria)" : (unit.status === "Inativa" ? "Inativa (Fechada)" : unit.status),
+        status: unit.status === "Ativa" ? "Ativa (Loja Própria)" : (unit.status === "Inativa" ? "Inativa (Fechada)" : (unit.status || "Ativa (Loja Própria)")),
         accountingId: unit.accountingId || "",
         companyName: unit.companyName || "",
         cnpj: unit.cnpj || "",
@@ -74,13 +69,121 @@ export default function Units() {
       }
   };
 
-  // 👇 A MÁGICA AQUI: O filtro agora aceita os dados antigos também!
+  // 👇 LÓGICA DE LEITURA DIRETO DO .XLSX DO EXCEL
+  const handleFileUpload = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      setIsImporting(true);
+      const reader = new FileReader();
+
+      reader.onload = async (event) => {
+          try {
+              // 1. Lê o arquivo como Binário (ArrayBuffer) para o XLSX entender
+              const data = new Uint8Array(event.target.result);
+              const workbook = XLSX.read(data, { type: 'array' });
+              
+              // 2. Pega a primeira aba da planilha
+              const firstSheetName = workbook.SheetNames[0];
+              const worksheet = workbook.Sheets[firstSheetName];
+              
+              // 3. Converte as células em um Array de Arrays (fácil de ler)
+              const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+              
+              if (rows.length < 2) {
+                  alert("A planilha parece estar vazia.");
+                  setIsImporting(false);
+                  return;
+              }
+
+              let headerIdx = -1;
+              let headers = [];
+              
+              // 4. O Radar: Lê as 10 primeiras linhas procurando os títulos (Ignorando se tiver linhas em branco no topo)
+              for (let i = 0; i < Math.min(10, rows.length); i++) {
+                  const row = rows[i];
+                  if (!row || row.length === 0) continue;
+                  
+                  // Limpa acentos e caracteres estranhos para analisar
+                  const rowStr = row.join(' ').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                  
+                  if (rowStr.includes('nome') || rowStr.includes('cnpj') || rowStr.includes('razao')) {
+                      headerIdx = i;
+                      // Salva os cabeçalhos limpinhos
+                      headers = row.map(cell => String(cell).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim());
+                      break;
+                  }
+              }
+
+              if (headerIdx === -1) {
+                  alert("⚠️ Não consegui encontrar as colunas. Verifique se a planilha tem uma coluna chamada 'Nome', 'CNPJ' ou 'Razão Social'.");
+                  setIsImporting(false);
+                  return;
+              }
+
+              // 5. Descobre em qual índice/posição está cada coluna
+              const nameIdx = headers.findIndex(h => h.includes('nome') || h.includes('fantasia') || h.includes('loja') || h.includes('unidade'));
+              const cnpjIdx = headers.findIndex(h => h.includes('cnpj'));
+              const companyNameIdx = headers.findIndex(h => h.includes('razao') || h.includes('empresa'));
+              const idIdx = headers.findIndex(h => h.includes('cod') || h.includes('id') || h.includes('planilha'));
+
+              let importedCount = 0;
+
+              // 6. Varre as lojas linha por linha
+              for (let i = headerIdx + 1; i < rows.length; i++) {
+                  const row = rows[i];
+                  if (!row || row.length === 0) continue;
+
+                  const rawName = nameIdx !== -1 ? String(row[nameIdx]).trim() : "";
+                  const rawCnpj = cnpjIdx !== -1 ? String(row[cnpjIdx]).trim() : "";
+                  const rawCompanyName = companyNameIdx !== -1 ? String(row[companyNameIdx]).trim() : "";
+                  const rawId = idIdx !== -1 ? String(row[idIdx]).trim() : "";
+
+                  if (rawName || rawCompanyName || rawCnpj) {
+                      const newUnit = {
+                          name: rawName || rawCompanyName || "Loja Nova Importada",
+                          accountingId: rawId,
+                          companyName: rawCompanyName,
+                          cnpj: rawCnpj,
+                          status: "Ativa (Loja Própria)",
+                          type: "Loja",
+                          email: "",
+                          address: "",
+                          city: "",
+                          state: "",
+                          manager: ""
+                      };
+                      await base44.entities.Unit.create(newUnit);
+                      importedCount++;
+                  }
+              }
+
+              if (importedCount > 0) {
+                  alert(`✅ SUCESSO ABSOLUTO! ${importedCount} Lojas foram importadas direto do seu Excel.\n\nElas estão prontas para o RH editar.`);
+              } else {
+                  alert("⚠️ Nenhuma loja importada. Verifique se as linhas abaixo do cabeçalho estão preenchidas.");
+              }
+              
+              queryClient.invalidateQueries(['units']);
+          } catch (error) {
+              console.error(error);
+              alert("Erro ao ler o arquivo Excel. Verifique se ele não está corrompido.");
+          } finally {
+              setIsImporting(false);
+              if(fileInputRef.current) fileInputRef.current.value = ""; 
+          }
+      };
+
+      // 🛑 O SEGREDO ESTÁ AQUI: Lê como arquivo binário, não como texto!
+      reader.readAsArrayBuffer(file); 
+  };
+
   const filteredUnits = units
     .filter(u => {
         const status = u.status || "";
-        if (activeTab === 'Próprias') return status.includes('Ativa'); // Pega "Ativa" e "Ativa (Loja Própria)"
+        if (activeTab === 'Próprias') return status.includes('Ativa'); 
         if (activeTab === 'Franquias') return status.includes('Franquia') || status.includes('Repassada');
-        if (activeTab === 'Inativas') return status.includes('Inativa'); // Pega "Inativa" e "Inativa (Fechada)"
+        if (activeTab === 'Inativas') return status.includes('Inativa'); 
         return true; 
     })
     .filter(u => {
@@ -90,7 +193,6 @@ export default function Units() {
         return searchName.includes(term) || searchId.includes(term);
     });
 
-  // 👇 Deixei as cores mais tolerantes com os nomes antigos
   const getStatusConfig = (status) => {
       if (!status) return { color: 'bg-slate-100 text-slate-700', icon: <Store className="w-4 h-4" />, dot: 'bg-slate-500' };
       if (status.includes('Ativa')) return { color: 'bg-emerald-100 text-emerald-700', icon: <CheckCircle2 className="w-4 h-4" />, dot: 'bg-emerald-500' };
@@ -108,11 +210,32 @@ export default function Units() {
             <h1 className="text-3xl font-bold text-slate-900">Unidades & Filiais</h1>
             <p className="text-slate-500">Gerencie Lojas Próprias, Franquias e Inativas.</p>
           </div>
-          <button onClick={handleOpenCreate} className="flex items-center gap-2 bg-[#059669] hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg font-bold shadow-sm transition-all">
-              <Plus className="w-4 h-4" /> Nova Unidade
-          </button>
+          
+          <div className="flex items-center gap-3 w-full md:w-auto">
+              {/* 👇 Agora o accept permite .xlsx e .csv! */}
+              <input 
+                  type="file" 
+                  accept=".xlsx, .xls, .csv" 
+                  ref={fileInputRef} 
+                  onChange={handleFileUpload} 
+                  className="hidden" 
+              />
+              <button 
+                  onClick={() => fileInputRef.current.click()} 
+                  disabled={isImporting}
+                  className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg font-bold shadow-sm transition-all disabled:opacity-50"
+              >
+                  {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+                  {isImporting ? "Lendo..." : "Importar Planilha Excel"}
+              </button>
+
+              <button onClick={handleOpenCreate} className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-[#059669] hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg font-bold shadow-sm transition-all">
+                  <Plus className="w-4 h-4" /> Nova Unidade
+              </button>
+          </div>
         </div>
 
+        {/* BARRA DE FILTROS */}
         <div className="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex flex-col xl:flex-row justify-between items-center gap-4">
             <div className="flex bg-slate-100 p-1 rounded-lg w-full xl:w-auto overflow-x-auto">
                 <button onClick={() => setActiveTab('Próprias')} className={`flex items-center gap-2 px-4 py-2 rounded-md font-bold text-sm whitespace-nowrap transition-all ${activeTab === 'Próprias' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
@@ -149,6 +272,7 @@ export default function Units() {
             </div>
         </div>
 
+        {/* LISTA DE LOJAS */}
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filteredUnits.map((unit) => {
             const statusConfig = getStatusConfig(unit.status);
@@ -176,8 +300,10 @@ export default function Units() {
                       ) : (
                            <p className="text-xs text-slate-400 italic">Sem CNPJ cadastrado</p>
                       )}
-                      {unit.city && (
+                      {unit.city ? (
                           <p className="text-xs text-slate-600 flex items-center gap-2"><MapPin className="w-3.5 h-3.5 text-slate-400"/> {unit.city} {unit.state && `- ${unit.state}`}</p>
+                      ) : (
+                          <p className="text-xs text-orange-400 flex items-center gap-2"><AlertCircle className="w-3.5 h-3.5"/> Endereço pendente (RH)</p>
                       )}
                   </div>
               </div>
@@ -186,8 +312,10 @@ export default function Units() {
                   <span className="font-medium text-slate-500 flex items-center gap-1.5">
                       <Users className="w-4 h-4 text-slate-400"/> {unitEmployees.length} colaboradores
                   </span>
-                  {unit.manager && (
+                  {unit.manager ? (
                       <span className="text-slate-500 truncate max-w-[130px]" title={unit.manager}>Ger: {unit.manager}</span>
+                  ) : (
+                      <span className="text-slate-400 italic">Sem gerente</span>
                   )}
               </div>
             </div>
@@ -201,6 +329,7 @@ export default function Units() {
           )}
         </div>
 
+        {/* MODAL DE EDIÇÃO / CRIAÇÃO MANUAL */}
         {isModalOpen && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden">
@@ -210,7 +339,6 @@ export default function Units() {
               </div>
               
               <form onSubmit={handleSave} className="p-6 space-y-5 overflow-y-auto">
-                
                 <div className="p-3 border border-slate-200 rounded-lg bg-slate-50/50">
                     <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Status da Loja</label>
                     <div className="relative">

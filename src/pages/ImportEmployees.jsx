@@ -1,277 +1,246 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "../api/base44Client";
 import { 
-  Upload, Check, XCircle, ArrowRight, Loader2, Info, MapPin, RefreshCw, Plus
+  UploadCloud, FileText, CheckCircle2, AlertCircle, Loader2, Users, Building2
 } from "lucide-react";
 import { ProtectedPage } from "../components/shared/AccessControl";
+import * as XLSX from 'xlsx';
 
 export default function ImportEmployees() {
   const queryClient = useQueryClient();
-  const [text, setText] = useState("");
-  const [preview, setPreview] = useState([]);
-  const [isSaving, setIsSaving] = useState(false);
+  const fileInputRef = useRef(null);
+  
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResults, setImportResults] = useState(null);
 
-  // Busca UNIDADES (para o ID) e FUNCIONÁRIOS (para não duplicar)
   const { data: units = [] } = useQuery({ queryKey: ['units'], queryFn: () => base44.entities.Unit.list() });
-  const { data: existingEmployees = [] } = useQuery({ queryKey: ['employees'], queryFn: () => base44.entities.Employee.list() });
 
-  // --- LÓGICA DE PROCESSAMENTO (14 COLUNAS) ---
-  const handleTextChange = (inputText) => {
-    setText(inputText);
-    const lines = inputText.split("\n");
-    const parsedData = [];
+  const handleFileUpload = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
 
-    for (let line of lines) {
-      line = line.trim();
-      if (!line) continue;
+      setIsImporting(true);
+      setImportResults(null);
       
-      const cols = line.replace(/"/g, "").split("\t"); 
-      
-      // Ignora cabeçalho
-      if (cols[0]?.toLowerCase().includes("id") || cols[1]?.toLowerCase().includes("nome")) continue;
+      const reader = new FileReader();
 
-      if (cols.length > 1) {
-         const storeCode = cols[0]?.trim(); 
-         const foundUnit = units.find(u => String(u.code) === String(storeCode));
+      reader.onload = async (event) => {
+          try {
+              const data = new Uint8Array(event.target.result);
+              const workbook = XLSX.read(data, { type: 'array' });
+              const firstSheetName = workbook.SheetNames[0];
+              const worksheet = workbook.Sheets[firstSheetName];
+              
+              const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+              
+              if (rows.length < 2) {
+                  alert("A planilha parece estar vazia.");
+                  setIsImporting(false);
+                  return;
+              }
 
-         // --- MAPEAMENTO DAS 14 COLUNAS ---
-         // 0: ID Loja
-         // 1: Nome
-         // 2: CPF
-         // 3: CEP
-         // 4: Rua
-         // 5: Numero
-         // 6: Compl
-         // 7: Bairro
-         // 8: PIS
-         // 9: Salario
-         // 10: Cargo
-         // 11: VA
-         // 12: VR
-         // 13: VT
+              let headerIdx = -1;
+              let headers = [];
+              
+              for (let i = 0; i < Math.min(10, rows.length); i++) {
+                  const row = rows[i];
+                  if (!row || row.length === 0) continue;
+                  
+                  const rowStr = row.join(' ').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                  
+                  if (rowStr.includes('nome') || rowStr.includes('cpf') || rowStr.includes('cargo')) {
+                      headerIdx = i;
+                      headers = row.map(cell => String(cell).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim());
+                      break;
+                  }
+              }
 
-         const nome = cols[1]?.trim() || "Sem Nome";
-         const cpf = cols[2]?.trim() || "";
-         
-         // Montagem de Endereço
-         const cep = cols[3]?.trim() || "";
-         const rua = cols[4]?.trim() || "";
-         const num = cols[5]?.trim() || "";
-         const compl = cols[6]?.trim() || "";
-         const bairro = cols[7]?.trim() || "";
+              if (headerIdx === -1) {
+                  alert("⚠️ Não encontrei os cabeçalhos. A planilha precisa ter colunas como 'Nome', 'CPF' ou 'Cargo'.");
+                  setIsImporting(false);
+                  return;
+              }
 
-         let fullAddress = rua;
-         if (num) fullAddress += `, ${num}`;
-         if (compl) fullAddress += ` - ${compl}`;
-         if (bairro) fullAddress += ` - ${bairro}`;
-         if (cep) fullAddress += ` - CEP: ${cep}`;
+              // 👇 1. MAPEAMENTO DAS NOVAS COLUNAS
+              const nameIdx = headers.findIndex(h => h.includes('nome') || h.includes('funcionario') || h.includes('colaborador'));
+              const cpfIdx = headers.findIndex(h => h.includes('cpf'));
+              const pisIdx = headers.findIndex(h => h.includes('nis') || h.includes('pis')); 
+              const roleIdx = headers.findIndex(h => h.includes('cargo') || h.includes('funcao'));
+              const salaryIdx = headers.findIndex(h => h.includes('salario') || h.includes('remuneracao') || h.includes('liquido'));
+              const vaIdx = headers.findIndex(h => h === 'va' || h.includes('alimentacao') || h.includes('va ')); 
+              const vrIdx = headers.findIndex(h => h === 'vr' || h.includes('refeicao') || h.includes('vr ')); 
+              const vtIdx = headers.findIndex(h => h === 'vt' || h.includes('transporte') || h.includes('vt ')); 
+              const unitIdx = headers.findIndex(h => h.includes('loja') || h.includes('unidade') || h.includes('centro') || h.includes('cod') || h.includes('id'));
+              const statusIdx = headers.findIndex(h => h.includes('situacao') || h.includes('status') || h.includes('estado'));
 
-         // Limpeza de dinheiro (Se vier vazio, vira "0")
-         const cleanMoney = (val) => val ? val.replace("R$", "").replace(/\s/g, "").replace(/\./g, "").replace(",", ".").trim() : "0";
+              let successCount = 0;
+              let errorCount = 0;
 
-         // --- VERIFICAÇÃO DE DUPLICIDADE (pelo Nome ou CPF) ---
-         const existingEmp = existingEmployees.find(e => 
-            e.name.toLowerCase() === nome.toLowerCase() || 
-            (cpf && e.cpf === cpf)
-         );
+              // 👇 2. FORMATADOR DE CPF E DINHEIRO
+              const parseMoney = (val) => {
+                  if(!val) return 0;
+                  const str = String(val).replace(/R\$/gi, '').replace(/\s/g, '');
+                  if (str.includes(',') && str.includes('.')) {
+                      return parseFloat(str.replace(/\./g, '').replace(',', '.')); 
+                  } else if (str.includes(',')) {
+                      return parseFloat(str.replace(',', '.')); 
+                  }
+                  return parseFloat(str) || 0;
+              };
 
-         parsedData.push({
-           operation: existingEmp ? "update" : "create",
-           existingId: existingEmp ? existingEmp.id : null,
+              const formatCPF = (val) => {
+                  if (!val) return "";
+                  let str = String(val).replace(/\D/g, ''); // Tira letras/pontos
+                  if (str.length === 0) return "";
+                  str = str.padStart(11, '0'); // Devolve o Zero à esquerda do Excel
+                  return str.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"); // Formata
+              };
 
-           storeId: storeCode,
-           unitName: foundUnit ? foundUnit.name : "NÃO ENCONTRADA",
-           unitObj: foundUnit,
-           
-           name: nome,
-           cpf: cpf,
-           address: fullAddress,          
-           pis: cols[8]?.trim() || "",    
-           salary: cleanMoney(cols[9]),
-           role: cols[10]?.trim() || "Funcionario",
-           
-           // Benefícios (Colunas 12, 13, 14 do Excel -> Índices 11, 12, 13)
-           va: cleanMoney(cols[11]),
-           vr: cleanMoney(cols[12]),
-           vt: cleanMoney(cols[13]),
-           
-           status: foundUnit ? "ready" : "error"
-         });
-      }
-    }
-    setPreview(parsedData);
-  };
+              // Processamento das Linhas
+              for (let i = headerIdx + 1; i < rows.length; i++) {
+                  const row = rows[i];
+                  if (!row || row.length === 0) continue;
 
-  const handleImport = async () => {
-    const validItems = preview.filter(i => i.status === "ready");
-    if (validItems.length === 0) return alert("Nada para importar.");
+                  const rawName = nameIdx !== -1 ? String(row[nameIdx]).trim() : "";
+                  
+                  // 👇 3. PUXANDO E FORMATANDO OS DADOS NOVOS
+                  const rawCpf = cpfIdx !== -1 ? formatCPF(row[cpfIdx]) : "";
+                  const rawPis = pisIdx !== -1 ? String(row[pisIdx]).replace(/\D/g, '') : ""; // Guarda só os números do PIS/NIS
+                  const rawVa = vaIdx !== -1 ? parseMoney(row[vaIdx]) : 0;
+                  const rawVr = vrIdx !== -1 ? parseMoney(row[vrIdx]) : 0;
+                  const rawVt = vtIdx !== -1 ? parseMoney(row[vtIdx]) : 0;
+                  
+                  const rawRole = roleIdx !== -1 ? String(row[roleIdx]).trim() : "Não Informado";
+                  const rawSalary = salaryIdx !== -1 ? parseMoney(row[salaryIdx]) : 0;
+                  const rawUnit = unitIdx !== -1 ? String(row[unitIdx]).trim() : "";
+                  const rawStatus = statusIdx !== -1 ? String(row[statusIdx]).toLowerCase() : "ativo";
 
-    setIsSaving(true);
-    try {
-        let createdCount = 0;
-        let updatedCount = 0;
+                  if (rawName) {
+                      let assignedUnit = null;
+                      if (rawUnit) {
+                          assignedUnit = units.find(u => String(u.accountingId).trim() === rawUnit);
+                          if (!assignedUnit) {
+                              assignedUnit = units.find(u => u.name.toLowerCase().includes(rawUnit.toLowerCase()));
+                          }
+                      }
 
-        for (const item of validItems) {
-            const payload = {
-                name: item.name,
-                role: item.role,
-                cpf: item.cpf,
-                pis: item.pis,
-                address: item.address,
-                salary: item.salary,
-                va: item.va,
-                vr: item.vr,
-                vt: item.vt,
-                unit: { id: item.unitObj.id, name: item.unitObj.name },
-                email: "", 
-                admissionDate: new Date().toISOString().split('T')[0]
-            };
+                      const finalStatus = rawStatus.includes('desligado') || rawStatus.includes('inativo') ? 'Desligado' : 'Ativo';
 
-            if (item.operation === "update" && item.existingId) {
-                // ATUALIZA O EXISTENTE
-                await base44.entities.Employee.update(item.existingId, payload);
-                updatedCount++;
-            } else {
-                // CRIA UM NOVO
-                await base44.entities.Employee.create(payload);
-                createdCount++;
-            }
-        }
-        
-        await queryClient.invalidateQueries(['employees']);
-        alert(`Processo concluído!\n✅ ${createdCount} Novos Criados\n🔄 ${updatedCount} Atualizados`);
-        setText("");
-        setPreview([]);
-    } catch (error) {
-        alert("Erro na importação.");
-    } finally {
-        setIsSaving(false);
-    }
+                      // 👇 4. SALVANDO NO BANCO COM TUDO NOVO
+                      const newEmployee = {
+                          name: rawName,
+                          cpf: rawCpf,
+                          pis: rawPis,
+                          role: rawRole,
+                          salary: rawSalary,
+                          va: rawVa,
+                          vr: rawVr,
+                          vt: rawVt,
+                          status: finalStatus,
+                          unit: assignedUnit ? { id: assignedUnit.id, name: assignedUnit.name } : null
+                      };
+                      
+                      await base44.entities.Employee.create(newEmployee);
+                      successCount++;
+                  } else {
+                      errorCount++;
+                  }
+              }
+
+              setImportResults({ success: successCount, error: errorCount });
+              queryClient.invalidateQueries(['employees']);
+              
+          } catch (error) {
+              console.error(error);
+              alert("Erro ao ler o arquivo. Certifique-se de que é um Excel (.xlsx) ou CSV válido.");
+          } finally {
+              setIsImporting(false);
+              if(fileInputRef.current) fileInputRef.current.value = ""; 
+          }
+      };
+
+      reader.readAsArrayBuffer(file); 
   };
 
   return (
     <ProtectedPage>
-      <div className="space-y-6 animate-in fade-in duration-500">
-        <div className="flex justify-between items-center">
-            <div>
-                <h1 className="text-3xl font-bold text-slate-900">Importação Completa (14 Colunas)</h1>
-                <p className="text-slate-500">Atualiza cadastro existente (CPF/Nome) e adiciona benefícios.</p>
+      <div className="space-y-6 animate-in fade-in duration-500 max-w-4xl mx-auto">
+        
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900">Importar Colaboradores</h1>
+          <p className="text-slate-500">Suba planilhas do Excel (.xlsx) ou CSV para atualizar a base de funcionários em massa.</p>
+        </div>
+
+        {/* ÁREA DE UPLOAD */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 md:p-12 text-center">
+            
+            <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                <UploadCloud className="w-10 h-10" />
+            </div>
+
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Selecione ou arraste sua planilha</h3>
+            <p className="text-slate-500 text-sm mb-8 max-w-lg mx-auto leading-relaxed">
+                O sistema lerá automaticamente as colunas: Nome, CPF, NIS/PIS, Cargo, Salário, VA, VR, VT e <strong className="text-slate-700">Código da Loja</strong>.
+            </p>
+
+            <input 
+                type="file" 
+                accept=".xlsx, .xls, .csv" 
+                ref={fileInputRef} 
+                onChange={handleFileUpload} 
+                className="hidden" 
+            />
+
+            <button 
+                onClick={() => fileInputRef.current.click()} 
+                disabled={isImporting}
+                className="inline-flex items-center justify-center gap-2 bg-[#059669] hover:bg-emerald-700 text-white px-8 py-3.5 rounded-xl font-bold shadow-sm transition-all disabled:opacity-70 text-lg"
+            >
+                {isImporting ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileText className="w-5 h-5" />}
+                {isImporting ? "Processando Funcionários..." : "Escolher Arquivo"}
+            </button>
+
+            <div className="mt-8 pt-6 border-t border-slate-100 flex justify-center gap-6 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                <span className="flex items-center gap-1"><CheckCircle2 className="w-4 h-4"/> Formato .XLSX</span>
+                <span className="flex items-center gap-1"><CheckCircle2 className="w-4 h-4"/> Formato .CSV</span>
             </div>
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-6 h-[75vh]">
-            
-            {/* LADO ESQUERDO */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col">
-                <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 mb-4">
-                    <h4 className="font-bold text-blue-900 text-sm flex items-center gap-2 mb-2">
-                        <Info className="w-4 h-4"/> ORDEM DAS 14 COLUNAS
-                    </h4>
-                    <div className="flex flex-wrap gap-2 text-[10px] font-mono font-bold text-slate-600">
-                        <span className="bg-blue-600 text-white px-2 py-1 rounded">1. ID LOJA</span>
-                        <span className="bg-white px-2 py-1 rounded border">2. NOME</span>
-                        <span className="bg-emerald-50 text-emerald-700 px-2 py-1 rounded border border-emerald-200">3. CPF</span>
-                        <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded border border-amber-200">4. CEP</span>
-                        <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded border border-amber-200">5. RUA</span>
-                        <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded border border-amber-200">6. Nº</span>
-                        <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded border border-amber-200">7. COMPL</span>
-                        <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded border border-amber-200">8. BAIRRO</span>
-                        <span className="bg-white px-2 py-1 rounded border">9. PIS</span>
-                        <span className="bg-white px-2 py-1 rounded border">10. SALÁRIO</span>
-                        <span className="bg-white px-2 py-1 rounded border">11. CARGO</span>
-                        
-                        <div className="w-full h-px bg-blue-200 my-1"></div>
-                        
-                        <span className="bg-orange-50 text-orange-700 px-2 py-1 rounded border border-orange-200">12. VA</span>
-                        <span className="bg-cyan-50 text-cyan-700 px-2 py-1 rounded border border-cyan-200">13. VR</span>
-                        <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded border border-indigo-200">14. VT</span>
+        {/* RESULTADO DA IMPORTAÇÃO */}
+        {importResults && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-in slide-in-from-bottom-4">
+                <h4 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <Users className="w-5 h-5 text-blue-600" /> Relatório de Importação
+                </h4>
+                
+                <div className="grid md:grid-cols-2 gap-4">
+                    <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl flex items-center gap-4">
+                        <div className="bg-emerald-100 text-emerald-600 p-2 rounded-lg"><CheckCircle2 className="w-6 h-6"/></div>
+                        <div>
+                            <p className="text-sm font-bold text-emerald-800">Importados com Sucesso</p>
+                            <p className="text-2xl font-black text-emerald-600">{importResults.success} Colaboradores</p>
+                        </div>
+                    </div>
+
+                    <div className="bg-orange-50 border border-orange-100 p-4 rounded-xl flex items-center gap-4">
+                        <div className="bg-orange-100 text-orange-600 p-2 rounded-lg"><AlertCircle className="w-6 h-6"/></div>
+                        <div>
+                            <p className="text-sm font-bold text-orange-800">Linhas em Branco / Ignoradas</p>
+                            <p className="text-2xl font-black text-orange-600">{importResults.error}</p>
+                        </div>
                     </div>
                 </div>
 
-                <textarea 
-                    className="flex-1 w-full p-4 border border-slate-300 rounded-lg font-mono text-xs focus:ring-2 focus:ring-emerald-500 outline-none resize-none whitespace-pre"
-                    placeholder="Cole aqui..."
-                    value={text}
-                    onChange={(e) => handleTextChange(e.target.value)}
-                ></textarea>
-            </div>
-
-            {/* LADO DIREITO */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                        <ArrowRight className="w-5 h-5 text-slate-400"/> Conferência
-                    </h3>
-                    {preview.length > 0 && <span className="text-xs font-bold bg-slate-100 px-2 py-1 rounded text-slate-600">{preview.length} linhas</span>}
-                </div>
-
-                <div className="flex-1 overflow-auto border rounded-lg bg-slate-50 relative">
-                    {preview.length === 0 ? (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
-                            <Upload className="w-10 h-10 mb-2 opacity-20"/>
-                            <p>Cole os dados para visualizar...</p>
-                        </div>
-                    ) : (
-                        <table className="w-full text-left text-xs whitespace-nowrap">
-                            <thead className="bg-slate-100 sticky top-0 font-bold text-slate-600">
-                                <tr>
-                                    <th className="p-2">Ação</th>
-                                    <th className="p-2">Loja</th>
-                                    <th className="p-2">Funcionário</th>
-                                    <th className="p-2">Salário</th>
-                                    <th className="p-2 text-center">Benefícios</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-200 bg-white">
-                                {preview.map((item, idx) => (
-                                    <tr key={idx} className={item.status === 'error' ? 'bg-red-50' : ''}>
-                                        <td className="p-2">
-                                            {item.operation === 'update' ? (
-                                                <span className="inline-flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold text-[10px]">
-                                                    <RefreshCw className="w-3 h-3"/> ATUALIZAR
-                                                </span>
-                                            ) : (
-                                                <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold text-[10px]">
-                                                    <Plus className="w-3 h-3"/> NOVO
-                                                </span>
-                                            )}
-                                        </td>
-                                        <td className="p-2">
-                                            {item.status === 'error' ? 
-                                                <span className="text-[10px] text-red-600 font-bold">ERRO ID: {item.storeId}</span> : 
-                                                <span className="text-[10px] text-emerald-600 font-bold truncate block max-w-[100px]">{item.unitName}</span>
-                                            }
-                                        </td>
-                                        <td className="p-2">
-                                            <div className="font-bold">{item.name}</div>
-                                            <div className="text-[10px] text-slate-400 truncate max-w-[150px]">{item.address}</div>
-                                        </td>
-                                        <td className="p-2 font-medium">{item.salary}</td>
-                                        <td className="p-2 text-center text-[10px] text-slate-500">
-                                            <div>VA: {item.va}</div>
-                                            <div>VR: {item.vr} | VT: {item.vt}</div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    )}
-                </div>
-
-                <div className="mt-4 pt-4 border-t flex justify-end">
-                    <button 
-                        onClick={handleImport}
-                        disabled={isSaving || preview.filter(i => i.status === 'ready').length === 0}
-                        className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold flex items-center gap-2 disabled:opacity-50"
-                    >
-                        {isSaving ? <Loader2 className="w-4 h-4 animate-spin"/> : <Check className="w-4 h-4"/>}
-                        Confirmar
-                    </button>
+                <div className="mt-4 p-4 bg-slate-50 rounded-lg text-sm text-slate-600 flex items-start gap-2">
+                    <Building2 className="w-4 h-4 mt-0.5 shrink-0 text-slate-400" />
+                    <p>
+                        Os CPFs foram formatados e os colaboradores foram vinculados às lojas com base no <strong>ID Contábil</strong>. Verifique a aba de Funcionários e a aba de Custos para conferir os resultados!
+                    </p>
                 </div>
             </div>
+        )}
 
-        </div>
       </div>
     </ProtectedPage>
   );
