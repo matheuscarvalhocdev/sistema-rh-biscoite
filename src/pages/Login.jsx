@@ -26,8 +26,8 @@ export default function Login() {
           const masterUser = { 
               id: "master-001", name: "Super Admin", email: "admin@biscoite.com", role: "Administrador" 
           };
-          localStorage.setItem("rh_token", "master-token-valid");
-          localStorage.setItem("rh_user", JSON.stringify(masterUser));
+          sessionStorage.setItem("rh_token", "master-token-valid");
+          sessionStorage.setItem("rh_user", JSON.stringify(masterUser));
           navigate("/"); 
           return;
       }
@@ -36,11 +36,11 @@ export default function Login() {
       const foundUser = users.find(u => u.email === email && u.password === password);
 
       if (foundUser) {
-          localStorage.setItem("rh_token", "user-token-valid");
+          sessionStorage.setItem("rh_token", "user-token-valid");
           const sessionUser = {
               id: foundUser.id, name: foundUser.name, email: foundUser.email, role: foundUser.role, unitId: foundUser.unitId 
           };
-          localStorage.setItem("rh_user", JSON.stringify(sessionUser));
+          sessionStorage.setItem("rh_user", JSON.stringify(sessionUser));
           navigate("/"); 
       } else {
           setError("E-mail ou senha incorretos.");

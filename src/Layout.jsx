@@ -1,6 +1,6 @@
 import logoBiscoite from './assets/logo-biscoite.svg';
 import { useState } from 'react'
-import { Outlet, Link, useLocation, useNavigate, Navigate } from 'react-router-dom' // 👈 Adicionamos o Navigate aqui
+import { Outlet, Link, useLocation, useNavigate, Navigate } from 'react-router-dom'
 import { 
   LayoutDashboard, Users, Upload, Building2, FileText, AlertTriangle, 
   History, Settings as SettingsIcon, UserCog, LogOut, Menu, X, 
@@ -13,8 +13,8 @@ export default function Layout() {
   const pathname = location.pathname;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // 👇 1. VERIFICA SE ESTÁ LOGADO DE VERDADE
-  const storedUserStr = localStorage.getItem("rh_user");
+  // 👇 1. VERIFICA SE ESTÁ LOGADO (Agora lê do sessionStorage primeiro, e no localStorage como backup de transição)
+  const storedUserStr = sessionStorage.getItem("rh_user") || localStorage.getItem("rh_user");
   
   // Se não tem ninguém logado, chuta pra tela de login na mesma hora!
   if (!storedUserStr) {
@@ -46,7 +46,10 @@ export default function Layout() {
       return true; 
   });
 
+  // 👇 4. LOGOUT BLINDADO (Limpa todos os rastros do navegador)
   const handleLogout = () => {
+    sessionStorage.removeItem("rh_token");
+    sessionStorage.removeItem("rh_user");
     localStorage.removeItem("rh_token");
     localStorage.removeItem("rh_user");
     navigate("/login");
