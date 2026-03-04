@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { base44 } from "../api/base44Client";
 import logoBiscoite from '../assets/logo-biscoite.svg';
 import { Key, Mail, Loader2, ShieldCheck, X, Send } from "lucide-react";
+import CryptoJS from 'crypto-js';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -22,6 +23,7 @@ export default function Login() {
     setIsLoading(true);
 
     try {
+      // A conta Master continua chumbada e imune
       if (email === "admin@biscoite.com" && password === "admin123") {
           const masterUser = { 
               id: "master-001", name: "Super Admin", email: "admin@biscoite.com", role: "Administrador" 
@@ -32,8 +34,13 @@ export default function Login() {
           return;
       }
 
+      // 👇 1. CRIPTOGRAFA A SENHA DIGITADA NA HORA DO LOGIN
+      const hashedPassword = CryptoJS.SHA256(password).toString();
+
       const users = await base44.entities.User.list();
-      const foundUser = users.find(u => u.email === email && u.password === password);
+      
+      // 👇 2. COMPARA A SENHA CRIPTOGRAFADA COM A DO BANCO
+      const foundUser = users.find(u => u.email === email && u.password === hashedPassword);
 
       if (foundUser) {
           sessionStorage.setItem("rh_token", "user-token-valid");
@@ -52,7 +59,6 @@ export default function Login() {
     }
   };
 
-  // 👇 NOVA LÓGICA DO "ESQUECI A SENHA"
   const handleRecoverPassword = async (e) => {
       e.preventDefault();
       if (!recoveryEmail) return;
@@ -60,31 +66,30 @@ export default function Login() {
       setIsRecovering(true);
 
       try {
-          // Bloqueio para o Super Admin
           if (recoveryEmail === "admin@biscoite.com") {
               alert("A senha do Super Admin é fixa no código (admin123) e não pode ser alterada por aqui.");
               setIsRecovering(false);
               return;
           }
 
-          // Busca o usuário no nosso banco de dados
           const users = await base44.entities.User.list();
           const foundUser = users.find(u => u.email === recoveryEmail);
 
           if (foundUser) {
-              // 1. Gera uma senha provisória
+              // 1. Gera uma senha provisória legível para o usuário ver
               const temporaryPassword = "biscoite" + Math.floor(100 + Math.random() * 900);
               
-              // 2. Atualiza a senha no banco de dados
+              // 👇 2. CRIPTOGRAFA A SENHA PROVISÓRIA ANTES DE SALVAR NO BANCO
+              const hashedTempPassword = CryptoJS.SHA256(temporaryPassword).toString();
+              
+              // 3. Atualiza a senha no banco de dados (escondida)
               await base44.entities.User.update(foundUser.id, { 
                   ...foundUser, 
-                  password: temporaryPassword 
+                  password: hashedTempPassword 
               });
 
-              // 3. Mostra a mensagem de teste
               alert(`🚨 SIMULAÇÃO DE SISTEMA 🚨\n\nNa vida real, um e-mail com um link seria enviado agora para ${recoveryEmail}.\n\nPara fins de homologação/teste, a senha deste usuário foi resetada para:\n\n👉 ${temporaryPassword}`);
           } else {
-              // Mensagem padrão de segurança (não avisa que o e-mail não existe)
               alert(`✅ Sucesso!\nSe o e-mail "${recoveryEmail}" estiver cadastrado no sistema, você receberá um link com as instruções.`);
           }
 

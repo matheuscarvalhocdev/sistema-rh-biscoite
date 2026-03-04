@@ -5,6 +5,7 @@ import {
   Shield, Key, Mail, UserPlus, Trash2, Edit2, Store, Search, ShieldCheck, ShieldAlert, X
 } from "lucide-react";
 import { ProtectedPage } from "../components/shared/AccessControl";
+import CryptoJS from 'crypto-js'; // 👈 IMPORTANDO O CRIPTOGRAFADOR
 
 export default function Users() {
   const queryClient = useQueryClient();
@@ -44,15 +45,23 @@ export default function Users() {
         return alert("Para o perfil Líder de Loja, você precisa vincular uma unidade!");
     }
 
+    // Cria uma cópia dos dados para não mexer no estado visual
+    const payload = { ...formData };
+
+    // 👇 SEGREDO DA BLINDAGEM: Se digitou uma senha, criptografa antes de salvar!
+    if (payload.password) {
+        payload.password = CryptoJS.SHA256(payload.password).toString();
+    } else {
+        // Se estiver editando e deixou a senha em branco, não apaga a senha antiga!
+        delete payload.password; 
+    }
+
     if (editingId) {
-        const payload = { ...formData };
-        if (!payload.password) delete payload.password; 
-        
         await base44.entities.User.update(editingId, payload);
         alert("✅ Usuário atualizado com sucesso!");
     } else {
         if (!formData.password) return alert("A senha é obrigatória para novos usuários!");
-        await base44.entities.User.create(formData);
+        await base44.entities.User.create(payload); // Salva o payload criptografado
         alert("✅ Usuário criado com acesso liberado!");
     }
 
@@ -173,13 +182,11 @@ export default function Users() {
           </table>
         </div>
 
-        {/* MODAL AJUSTADO (Com barra de rolagem e altura máxima) */}
+        {/* MODAL DE EDIÇÃO E CADASTRO */}
         {isModalOpen && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in">
-            {/* Adicionado max-h-[90vh] e flex-col aqui 👇 */}
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden">
               
-              {/* Cabeçalho Fixo (Nunca some) */}
               <div className="p-6 border-b flex justify-between items-center bg-slate-50 shrink-0">
                 <h3 className="font-bold text-lg text-slate-800">{editingId ? "Editar Usuário" : "Novo Acesso"}</h3>
                 <button type="button" onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
@@ -187,7 +194,6 @@ export default function Users() {
                 </button>
               </div>
               
-              {/* Formulário com Scroll Interno (overflow-y-auto) 👇 */}
               <form onSubmit={handleSave} className="p-6 space-y-4 overflow-y-auto">
                 
                 <div>
