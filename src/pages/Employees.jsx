@@ -2,11 +2,10 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "../api/base44Client";
-// 👇 TODOS os ícones importados corretamente para não dar tela branca!
 import { 
   Search, Plus, X, Building2, UserCircle, 
   Briefcase, DollarSign, CheckCircle2, AlertCircle, Calendar,
-  Download, Upload
+  Download, Upload, Filter, PauseCircle, UserMinus
 } from "lucide-react";
 import { ProtectedPage } from "../components/shared/AccessControl";
 
@@ -15,6 +14,7 @@ export default function Employees() {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedUnit, setSelectedUnit] = useState("");
+  const [statusFilter, setStatusFilter] = useState("Ativo"); 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
@@ -41,7 +41,7 @@ export default function Employees() {
         name: "", cpf: "", pis: "", role: "", status: "Ativo", 
         salary: "", va: "", vr: "", vt: "", unitId: "", admissionDate: "" 
     });
-    setIsModalOpen(true); // O modal agora abrirá perfeitamente sem crash!
+    setIsModalOpen(true);
   };
 
   const handleOpenEdit = (emp) => {
@@ -79,10 +79,14 @@ export default function Employees() {
     setIsModalOpen(false);
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm("Tem certeza que deseja desligar/apagar este colaborador?")) {
-      await base44.entities.Employee.delete(id);
-      queryClient.invalidateQueries(['employees']);
+  // Botão Rápido: Apenas muda o status para "Desligado" (não apaga do banco)
+  const handleQuickDesligar = async (id) => {
+    if (window.confirm("Tem certeza que deseja alterar o status deste colaborador para Desligado?")) {
+      const empToUpdate = employees.find(e => e.id === id);
+      if (empToUpdate) {
+          await base44.entities.Employee.update(id, { ...empToUpdate, status: "Desligado" });
+          queryClient.invalidateQueries(['employees']);
+      }
     }
   };
 
@@ -92,7 +96,9 @@ export default function Employees() {
       const matchName = safeName.toLowerCase().includes(searchTerm.toLowerCase());
       const matchCpf = safeCpf.includes(searchTerm);
       const matchUnit = selectedUnit === "" || String(emp.unit?.id) === String(selectedUnit);
-      return (matchName || matchCpf) && matchUnit;
+      const matchStatus = statusFilter === "" || emp.status === statusFilter;
+      
+      return (matchName || matchCpf) && matchUnit && matchStatus;
   });
 
   const formatTableDate = (dateString) => {
@@ -101,12 +107,14 @@ export default function Employees() {
       return `${day}/${month}/${year}`;
   };
 
-  // Botão Inteligente de Exportar a Loja Selecionada
-  const handleExport = (statusFilter) => {
-      const toExport = filteredEmployees.filter(emp => emp.status === statusFilter);
+  const handleExport = (statusFilterToExport) => {
+      const toExport = employees.filter(emp => {
+          const matchUnit = selectedUnit === "" || String(emp.unit?.id) === String(selectedUnit);
+          return matchUnit && emp.status === statusFilterToExport;
+      });
 
       if (toExport.length === 0) {
-          alert(`Não há colaboradores com status '${statusFilter}' nesta seleção para exportar.`);
+          alert(`Não há colaboradores '${statusFilterToExport}' nesta seleção para exportar.`);
           return;
       }
 
@@ -124,17 +132,33 @@ export default function Employees() {
       const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
       link.setAttribute("href", url);
-      link.setAttribute("download", `colaboradores_${statusFilter.toLowerCase()}.csv`);
+      link.setAttribute("download", `colaboradores_${statusFilterToExport.toLowerCase()}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+  };
+
+  // 👇 FUNÇÃO PARA RENDERIZAR O CRACHÁ DE STATUS
+  const renderStatusBadge = (status) => {
+      switch (status) {
+          case 'Ativo':
+              return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-100"><CheckCircle2 className="w-3.5 h-3.5" /> Ativo</span>;
+          case 'Desligado':
+              return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-red-50 text-red-700 border border-red-100"><AlertCircle className="w-3.5 h-3.5" /> Desligado</span>;
+          case 'Afastamento':
+              return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-amber-50 text-amber-700 border border-amber-100"><PauseCircle className="w-3.5 h-3.5" /> Afastamento</span>;
+          case 'Abandono':
+              return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200"><UserMinus className="w-3.5 h-3.5" /> Abandono</span>;
+          default:
+              return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-500 border border-slate-200">{status}</span>;
+      }
   };
 
   return (
     <ProtectedPage>
       <div className="space-y-6 animate-in fade-in duration-500">
         
-        {/* CABEÇALHO COM BOTÕES */}
+        {/* CABEÇALHO */}
         <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold text-slate-900">Quadro de Colaboradores</h1>
@@ -161,7 +185,7 @@ export default function Employees() {
           </div>
         </div>
 
-        {/* FILTROS DE LOJA E BUSCA */}
+        {/* FILTROS */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4 items-center">
             <div className="flex-1 w-full relative">
                 <Search className="absolute left-3 top-2.5 h-5 w-5 text-slate-400" />
@@ -173,7 +197,8 @@ export default function Employees() {
                     onChange={e => setSearchTerm(e.target.value)} 
                 />
             </div>
-            <div className="w-full md:w-80 relative">
+            
+            <div className="w-full md:w-64 relative">
                 <Building2 className="absolute left-3 top-2.5 h-5 w-5 text-slate-400 pointer-events-none" />
                 <select 
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium" 
@@ -186,9 +211,24 @@ export default function Employees() {
                     ))}
                 </select>
             </div>
+
+            <div className="w-full md:w-48 relative">
+                <Filter className="absolute left-3 top-2.5 h-5 w-5 text-slate-400 pointer-events-none" />
+                <select 
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium" 
+                    value={statusFilter} 
+                    onChange={e => setStatusFilter(e.target.value)}
+                >
+                    <option value="">Todos os Status</option>
+                    <option value="Ativo">Apenas Ativos</option>
+                    <option value="Desligado">Apenas Desligados</option>
+                    <option value="Afastamento">Apenas Afastamentos</option>
+                    <option value="Abandono">Apenas Abandonos</option>
+                </select>
+            </div>
         </div>
 
-        {/* TABELA AJUSTADA PARA NÃO TER BARRA DE ROLAGEM HORIZONTAL */}
+        {/* TABELA */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
             <table className="min-w-full text-left text-sm">
                 <thead className="bg-slate-50 text-slate-500 border-b border-slate-100 whitespace-nowrap">
@@ -238,25 +278,23 @@ export default function Employees() {
                                 )}
                             </td>
                             <td className="p-4 whitespace-nowrap">
-                                {emp.status === 'Ativo' ? (
-                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-100">
-                                        <CheckCircle2 className="w-3.5 h-3.5" /> Ativo
-                                    </span>
-                                ) : (
-                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-red-50 text-red-700 border border-red-100">
-                                        <AlertCircle className="w-3.5 h-3.5" /> Desligado
-                                    </span>
-                                )}
+                                {/* Chama a função que desenha o crachá certo */}
+                                {renderStatusBadge(emp.status)}
                             </td>
-                            {/* BOTÕES DE AÇÃO ESCRITOS E VISÍVEIS */}
                             <td className="p-4 text-right whitespace-nowrap">
                                 <div className="flex items-center justify-end gap-3">
                                     <button onClick={() => handleOpenEdit(emp)} className="text-sm font-bold text-slate-500 hover:text-blue-600 transition-colors">
                                         Editar
                                     </button>
-                                    <button onClick={() => handleDelete(emp.id)} className="text-sm font-bold text-red-500 hover:text-red-700 transition-colors">
-                                        Desligar
-                                    </button>
+                                    
+                                    {/* Botão Rápido de Desligar só aparece se ele for Ativo */}
+                                    {emp.status === 'Ativo' ? (
+                                        <button onClick={() => handleQuickDesligar(emp.id)} className="text-sm font-bold text-red-500 hover:text-red-700 transition-colors">
+                                            Desligar
+                                        </button>
+                                    ) : (
+                                        <span className="text-sm font-bold text-slate-300 w-12 text-center">-</span>
+                                    )}
                                 </div>
                             </td>
                         </tr>
@@ -265,7 +303,7 @@ export default function Employees() {
                         <tr>
                             <td colSpan="6" className="p-12 text-center text-slate-400">
                                 <UserCircle className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                                <p className="font-medium">Nenhum colaborador encontrado.</p>
+                                <p className="font-medium">Nenhum colaborador encontrado com os filtros atuais.</p>
                             </td>
                         </tr>
                     )}
@@ -332,6 +370,8 @@ export default function Employees() {
                             <select className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 transition-all font-medium text-slate-700" value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})}>
                                 <option value="Ativo">🟢 Ativo</option>
                                 <option value="Desligado">🔴 Desligado</option>
+                                <option value="Afastamento">🟡 Afastamento</option>
+                                <option value="Abandono">⚫ Abandono</option>
                             </select>
                         </div>
                         <div className="md:col-span-3">
