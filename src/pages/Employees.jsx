@@ -5,7 +5,7 @@ import { base44 } from "../api/base44Client";
 import { 
   Search, Plus, X, Building2, UserCircle, 
   Briefcase, DollarSign, CheckCircle2, AlertCircle, Calendar,
-  Download, Upload, Filter, PauseCircle, UserMinus
+  Download, Upload, Filter, PauseCircle, UserMinus, Trash2
 } from "lucide-react";
 import { ProtectedPage } from "../components/shared/AccessControl";
 
@@ -90,6 +90,15 @@ export default function Employees() {
     }
   };
 
+  // 👇 NOVO: O BOTÃO DE AUTODESTRUIÇÃO (EXCLUI DE VERDADE)
+  const handleHardDelete = async (id) => {
+      if (window.confirm("⚠️ ALERTA: Você está prestes a apagar este registro DEFINITIVAMENTE do banco de dados.\n\nEsta ação não pode ser desfeita. Deseja continuar?")) {
+          await base44.entities.Employee.delete(id);
+          queryClient.invalidateQueries(['employees']);
+          setIsModalOpen(false);
+      }
+  };
+
   const filteredEmployees = employees.filter(emp => {
       const safeName = emp.name || "";
       const safeCpf = emp.cpf || "";
@@ -138,7 +147,6 @@ export default function Employees() {
       document.body.removeChild(link);
   };
 
-  // 👇 FUNÇÃO PARA RENDERIZAR O CRACHÁ DE STATUS
   const renderStatusBadge = (status) => {
       switch (status) {
           case 'Ativo':
@@ -158,7 +166,6 @@ export default function Employees() {
     <ProtectedPage>
       <div className="space-y-6 animate-in fade-in duration-500">
         
-        {/* CABEÇALHO */}
         <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold text-slate-900">Quadro de Colaboradores</h1>
@@ -185,7 +192,6 @@ export default function Employees() {
           </div>
         </div>
 
-        {/* FILTROS */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4 items-center">
             <div className="flex-1 w-full relative">
                 <Search className="absolute left-3 top-2.5 h-5 w-5 text-slate-400" />
@@ -228,7 +234,6 @@ export default function Employees() {
             </div>
         </div>
 
-        {/* TABELA */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
             <table className="min-w-full text-left text-sm">
                 <thead className="bg-slate-50 text-slate-500 border-b border-slate-100 whitespace-nowrap">
@@ -278,7 +283,6 @@ export default function Employees() {
                                 )}
                             </td>
                             <td className="p-4 whitespace-nowrap">
-                                {/* Chama a função que desenha o crachá certo */}
                                 {renderStatusBadge(emp.status)}
                             </td>
                             <td className="p-4 text-right whitespace-nowrap">
@@ -287,7 +291,6 @@ export default function Employees() {
                                         Editar
                                     </button>
                                     
-                                    {/* Botão Rápido de Desligar só aparece se ele for Ativo */}
                                     {emp.status === 'Ativo' ? (
                                         <button onClick={() => handleQuickDesligar(emp.id)} className="text-sm font-bold text-red-500 hover:text-red-700 transition-colors">
                                             Desligar
@@ -311,7 +314,6 @@ export default function Employees() {
             </table>
         </div>
 
-        {/* MODAL DE EDIÇÃO E CADASTRO */}
         {isModalOpen && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
@@ -427,8 +429,19 @@ export default function Employees() {
 
               </form>
               
-              <div className="p-6 border-t border-slate-100 bg-white shrink-0">
-                  <button onClick={handleSave} className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-sm transition-colors text-lg flex items-center justify-center gap-2">
+              {/* 👇 AQUI ESTÁ A MÁGICA: O BOTÃO EXCLUIR JUNTO COM O SALVAR */}
+              <div className="p-6 border-t border-slate-100 bg-white shrink-0 flex gap-3">
+                  {editingId && (
+                      <button 
+                          type="button" 
+                          onClick={() => handleHardDelete(editingId)} 
+                          title="Excluir Definitivamente"
+                          className="px-4 py-3.5 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded-xl shadow-sm transition-colors flex items-center justify-center"
+                      >
+                          <Trash2 className="w-5 h-5" />
+                      </button>
+                  )}
+                  <button onClick={handleSave} className="flex-1 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-sm transition-colors text-lg flex items-center justify-center gap-2">
                       <CheckCircle2 className="w-5 h-5" />
                       {editingId ? "Salvar Ficha" : "Cadastrar Colaborador"}
                   </button>

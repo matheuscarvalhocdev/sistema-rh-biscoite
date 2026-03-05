@@ -15,6 +15,8 @@ export default function ImportEmployees() {
   const [importResults, setImportResults] = useState(null);
 
   const { data: units = [] } = useQuery({ queryKey: ['units'], queryFn: () => base44.entities.Unit.list() });
+  // 👇 AGORA ELE PUXA OS FUNCIONÁRIOS PARA NÃO DUPLICAR!
+  const { data: employees = [] } = useQuery({ queryKey: ['employees'], queryFn: () => base44.entities.Employee.list() });
 
   const handleFileUpload = (e) => {
       const file = e.target.files[0];
@@ -32,7 +34,7 @@ export default function ImportEmployees() {
               const firstSheetName = workbook.SheetNames[0];
               const worksheet = workbook.Sheets[firstSheetName];
               
-              const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+              const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: false });
               
               if (rows.length < 2) {
                   alert("A planilha parece estar vazia.");
@@ -62,7 +64,6 @@ export default function ImportEmployees() {
                   return;
               }
 
-              // 👇 1. MAPEAMENTO DAS NOVAS COLUNAS
               const nameIdx = headers.findIndex(h => h.includes('nome') || h.includes('funcionario') || h.includes('colaborador'));
               const cpfIdx = headers.findIndex(h => h.includes('cpf'));
               const pisIdx = headers.findIndex(h => h.includes('nis') || h.includes('pis')); 
@@ -74,49 +75,54 @@ export default function ImportEmployees() {
               const unitIdx = headers.findIndex(h => h.includes('loja') || h.includes('unidade') || h.includes('centro') || h.includes('cod') || h.includes('id'));
               const statusIdx = headers.findIndex(h => h.includes('situacao') || h.includes('status') || h.includes('estado'));
 
-              let successCount = 0;
+              let createdCount = 0;
+              let updatedCount = 0;
               let errorCount = 0;
 
-              // 👇 2. FORMATADOR DE CPF E DINHEIRO
               const parseMoney = (val) => {
-                  if(!val) return 0;
-                  const str = String(val).replace(/R\$/gi, '').replace(/\s/g, '');
+                  if (val === null || val === undefined || val === '') return 0;
+                  if (typeof val === 'number') return parseFloat(val) || 0;
+                  let str = String(val).trim();
+                  str = str.replace(/R\$/gi, '').replace(/\s/g, '');
                   if (str.includes(',') && str.includes('.')) {
-                      return parseFloat(str.replace(/\./g, '').replace(',', '.')); 
+                      if (str.indexOf('.') < str.indexOf(',')) {
+                          str = str.replace(/\./g, ''); 
+                          str = str.replace(',', '.'); 
+                      } else {
+                          str = str.replace(/,/g, ''); 
+                      }
                   } else if (str.includes(',')) {
-                      return parseFloat(str.replace(',', '.')); 
+                      str = str.replace(',', '.'); 
                   }
                   return parseFloat(str) || 0;
               };
 
               const formatCPF = (val) => {
                   if (!val) return "";
-                  let str = String(val).replace(/\D/g, ''); // Tira letras/pontos
+                  let str = String(val).replace(/\D/g, ''); 
                   if (str.length === 0) return "";
-                  str = str.padStart(11, '0'); // Devolve o Zero à esquerda do Excel
-                  return str.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"); // Formata
+                  str = str.padStart(11, '0'); 
+                  return str.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"); 
               };
 
-              // Processamento das Linhas
               for (let i = headerIdx + 1; i < rows.length; i++) {
                   const row = rows[i];
                   if (!row || row.length === 0) continue;
 
                   const rawName = nameIdx !== -1 ? String(row[nameIdx]).trim() : "";
-                  
-                  // 👇 3. PUXANDO E FORMATANDO OS DADOS NOVOS
                   const rawCpf = cpfIdx !== -1 ? formatCPF(row[cpfIdx]) : "";
-                  const rawPis = pisIdx !== -1 ? String(row[pisIdx]).replace(/\D/g, '') : ""; // Guarda só os números do PIS/NIS
-                  const rawVa = vaIdx !== -1 ? parseMoney(row[vaIdx]) : 0;
-                  const rawVr = vrIdx !== -1 ? parseMoney(row[vrIdx]) : 0;
-                  const rawVt = vtIdx !== -1 ? parseMoney(row[vtIdx]) : 0;
                   
-                  const rawRole = roleIdx !== -1 ? String(row[roleIdx]).trim() : "Não Informado";
-                  const rawSalary = salaryIdx !== -1 ? parseMoney(row[salaryIdx]) : 0;
-                  const rawUnit = unitIdx !== -1 ? String(row[unitIdx]).trim() : "";
-                  const rawStatus = statusIdx !== -1 ? String(row[statusIdx]).toLowerCase() : "ativo";
-
                   if (rawName) {
+                      const rawPis = pisIdx !== -1 ? String(row[pisIdx]).replace(/\D/g, '') : ""; 
+                      const rawVa = vaIdx !== -1 ? parseMoney(row[vaIdx]) : 0;
+                      const rawVr = vrIdx !== -1 ? parseMoney(row[vrIdx]) : 0;
+                      const rawVt = vtIdx !== -1 ? parseMoney(row[vtIdx]) : 0;
+                      const rawSalary = salaryIdx !== -1 ? parseMoney(row[salaryIdx]) : 0;
+                      
+                      const rawRole = roleIdx !== -1 ? String(row[roleIdx]).trim() : "Não Informado";
+                      const rawUnit = unitIdx !== -1 ? String(row[unitIdx]).trim() : "";
+                      const rawStatus = statusIdx !== -1 ? String(row[statusIdx]).toLowerCase() : "ativo";
+
                       let assignedUnit = null;
                       if (rawUnit) {
                           assignedUnit = units.find(u => String(u.accountingId).trim() === rawUnit);
@@ -125,10 +131,12 @@ export default function ImportEmployees() {
                           }
                       }
 
-                      const finalStatus = rawStatus.includes('desligado') || rawStatus.includes('inativo') ? 'Desligado' : 'Ativo';
+                      let finalStatus = 'Ativo';
+                      if (rawStatus.includes('desligado') || rawStatus.includes('inativo')) finalStatus = 'Desligado';
+                      if (rawStatus.includes('afastamento') || rawStatus.includes('afastado')) finalStatus = 'Afastamento';
+                      if (rawStatus.includes('abandono')) finalStatus = 'Abandono';
 
-                      // 👇 4. SALVANDO NO BANCO COM TUDO NOVO
-                      const newEmployee = {
+                      const payload = {
                           name: rawName,
                           cpf: rawCpf,
                           pis: rawPis,
@@ -140,15 +148,25 @@ export default function ImportEmployees() {
                           status: finalStatus,
                           unit: assignedUnit ? { id: assignedUnit.id, name: assignedUnit.name } : null
                       };
-                      
-                      await base44.entities.Employee.create(newEmployee);
-                      successCount++;
+
+                      // 👇 LÓGICA ANTI-DUPLICAÇÃO (Verifica se o CPF já existe no banco)
+                      const existingEmployee = employees.find(e => e.cpf === rawCpf && rawCpf !== "");
+
+                      if (existingEmployee) {
+                          // Se já existe, atualiza os dados da pessoa!
+                          await base44.entities.Employee.update(existingEmployee.id, payload);
+                          updatedCount++;
+                      } else {
+                          // Se não existe, cria um novo!
+                          await base44.entities.Employee.create(payload);
+                          createdCount++;
+                      }
                   } else {
                       errorCount++;
                   }
               }
 
-              setImportResults({ success: successCount, error: errorCount });
+              setImportResults({ created: createdCount, updated: updatedCount, error: errorCount });
               queryClient.invalidateQueries(['employees']);
               
           } catch (error) {
@@ -172,7 +190,6 @@ export default function ImportEmployees() {
           <p className="text-slate-500">Suba planilhas do Excel (.xlsx) ou CSV para atualizar a base de funcionários em massa.</p>
         </div>
 
-        {/* ÁREA DE UPLOAD */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 md:p-12 text-center">
             
             <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -181,7 +198,7 @@ export default function ImportEmployees() {
 
             <h3 className="text-xl font-bold text-slate-800 mb-2">Selecione ou arraste sua planilha</h3>
             <p className="text-slate-500 text-sm mb-8 max-w-lg mx-auto leading-relaxed">
-                O sistema lerá automaticamente as colunas: Nome, CPF, NIS/PIS, Cargo, Salário, VA, VR, VT e <strong className="text-slate-700">Código da Loja</strong>.
+                O sistema atualizará salários e informações automaticamente usando o <strong>CPF</strong> para não duplicar registros.
             </p>
 
             <input 
@@ -198,7 +215,7 @@ export default function ImportEmployees() {
                 className="inline-flex items-center justify-center gap-2 bg-[#059669] hover:bg-emerald-700 text-white px-8 py-3.5 rounded-xl font-bold shadow-sm transition-all disabled:opacity-70 text-lg"
             >
                 {isImporting ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileText className="w-5 h-5" />}
-                {isImporting ? "Processando Funcionários..." : "Escolher Arquivo"}
+                {isImporting ? "Processando Planilha..." : "Escolher Arquivo"}
             </button>
 
             <div className="mt-8 pt-6 border-t border-slate-100 flex justify-center gap-6 text-xs font-bold text-slate-400 uppercase tracking-wider">
@@ -207,26 +224,33 @@ export default function ImportEmployees() {
             </div>
         </div>
 
-        {/* RESULTADO DA IMPORTAÇÃO */}
         {importResults && (
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 animate-in slide-in-from-bottom-4">
                 <h4 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                     <Users className="w-5 h-5 text-blue-600" /> Relatório de Importação
                 </h4>
                 
-                <div className="grid md:grid-cols-2 gap-4">
+                <div className="grid md:grid-cols-3 gap-4">
                     <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl flex items-center gap-4">
                         <div className="bg-emerald-100 text-emerald-600 p-2 rounded-lg"><CheckCircle2 className="w-6 h-6"/></div>
                         <div>
-                            <p className="text-sm font-bold text-emerald-800">Importados com Sucesso</p>
-                            <p className="text-2xl font-black text-emerald-600">{importResults.success} Colaboradores</p>
+                            <p className="text-sm font-bold text-emerald-800">Novos Criados</p>
+                            <p className="text-2xl font-black text-emerald-600">{importResults.created}</p>
+                        </div>
+                    </div>
+
+                    <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl flex items-center gap-4">
+                        <div className="bg-blue-100 text-blue-600 p-2 rounded-lg"><UploadCloud className="w-6 h-6"/></div>
+                        <div>
+                            <p className="text-sm font-bold text-blue-800">Atualizados</p>
+                            <p className="text-2xl font-black text-blue-600">{importResults.updated}</p>
                         </div>
                     </div>
 
                     <div className="bg-orange-50 border border-orange-100 p-4 rounded-xl flex items-center gap-4">
                         <div className="bg-orange-100 text-orange-600 p-2 rounded-lg"><AlertCircle className="w-6 h-6"/></div>
                         <div>
-                            <p className="text-sm font-bold text-orange-800">Linhas em Branco / Ignoradas</p>
+                            <p className="text-sm font-bold text-orange-800">Ignorados</p>
                             <p className="text-2xl font-black text-orange-600">{importResults.error}</p>
                         </div>
                     </div>
@@ -235,7 +259,7 @@ export default function ImportEmployees() {
                 <div className="mt-4 p-4 bg-slate-50 rounded-lg text-sm text-slate-600 flex items-start gap-2">
                     <Building2 className="w-4 h-4 mt-0.5 shrink-0 text-slate-400" />
                     <p>
-                        Os CPFs foram formatados e os colaboradores foram vinculados às lojas com base no <strong>ID Contábil</strong>. Verifique a aba de Funcionários e a aba de Custos para conferir os resultados!
+                        Os salários foram formatados perfeitamente. Verifique a aba de Funcionários e a aba de Custos para conferir os resultados!
                     </p>
                 </div>
             </div>
